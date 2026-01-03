@@ -1,0 +1,9 @@
+## Interface: 120000
+## Title: Ascension Talent Manager
+## Notes: Automatically manages talent loadouts based on context.
+## Author: AkaDoctorCode
+## Version: 1.0.0
+## SavedVariables: AscensionTalentDB
+
+AscensionTalentManager-main.lua
+AscensionTalentManagerUI-main.lua
