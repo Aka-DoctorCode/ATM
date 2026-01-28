@@ -1,7 +1,7 @@
 -------------------------------------------------------------------------------
 -- Project: AscensionTalentManager
 -- Author: Aka-DoctorCode 
--- File: AscensionTalentManagerUI.lua
+-- File: UI.lua
 -- Version: 12.0.0
 -------------------------------------------------------------------------------
 -- Copyright (c) 2025–2026 Aka-DoctorCode. All Rights Reserved.
@@ -37,27 +37,8 @@ local ConfigFrame = nil
 local PromptFrame = nil
 local ActiveDropdown = nil
 
--- Compatibility Wrapper
-local function GetConfigInfo(configID)
-    if not configID then return nil end
-    if C_Traits and C_Traits.GetConfigInfo then
-        return C_Traits.GetConfigInfo(configID)
-    end
-    if C_ClassTalents and C_ClassTalents.GetConfigInfo then
-        return C_ClassTalents.GetConfigInfo(configID)
-    end
-    return nil
-end
-
-local function GetSpecID()
-    local s = GetSpecialization()
-    if not s then return nil end
-    local id, _ = GetSpecializationInfo(s)
-    return id
-end
-
 local function GetLoadoutNames()
-    local specID = GetSpecID()
+    local specID = private.GetSpecID()
     if not specID then return {} end
 
     local names = { "-" }
@@ -67,7 +48,7 @@ local function GetLoadoutNames()
     if not configIDs then return names end
 
     for _, id in ipairs(configIDs) do
-        local info = GetConfigInfo(id)
+        local info = private.GetConfigInfo(id)
         if info and info.name then
             table.insert(names, info.name)
         end
@@ -117,9 +98,7 @@ local function CreateSafeDropdown(parent, ctxKey, width)
     frame.List = listFrame
 
     frame.UpdateSelection = function(self)
-        -- POINT 5: Enhanced Safety Checks (Validation)
-        -- We explicitly check every step of the table hierarchy to avoid errors
-        local specID = GetSpecID()
+        local specID = private.GetSpecID()
         local val = "-"
         
         if specID 
@@ -157,9 +136,9 @@ local function CreateSafeDropdown(parent, ctxKey, width)
                     btn.Text = t
                     btn:SetScript("OnClick", function(b)
                         local selected = b.Text:GetText()
-                        local specID = GetSpecID()
+                        local specID = private.GetSpecID()
                         if specID and AscensionTalentManagerDB then
-                            -- Ensure nested tables exist before writing
+                            
                             if not AscensionTalentManagerDB.perSpec then AscensionTalentManagerDB.perSpec = {} end
                             if not AscensionTalentManagerDB.perSpec[specID] then AscensionTalentManagerDB.perSpec[specID] = {} end
                             
@@ -255,7 +234,7 @@ local function CreatePromptFrame()
     PromptFrame:SetPoint("TOP", 0, -200)
     PromptFrame:SetFrameStrata("DIALOG")
     PromptFrame:EnableKeyboard(true)
-    PromptFrame:SetPropagateKeyboardInput(false)
+    PromptFrame:SetPropagateKeyboardInput(true)
 
     PromptFrame:SetBackdrop({
         bgFile = "Interface/Buttons/WHITE8x8",
@@ -299,7 +278,7 @@ local function CreatePromptFrame()
         local result = C_ClassTalents.LoadConfig(self.targetLoadoutID, true)
         if result then
             print("|cff00ff00[AscensionTalentManager]|r Switching to " .. (self.targetName or "..."))
-            local specID = GetSpecID()
+            local specID = private.GetSpecID()
             if specID and C_ClassTalents.UpdateLastSelectedSavedConfigID then
                 C_ClassTalents.UpdateLastSelectedSavedConfigID(specID, self.targetLoadoutID)
             end

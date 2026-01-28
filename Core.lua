@@ -1,7 +1,7 @@
 -------------------------------------------------------------------------------
 -- Project: AscensionTalentManager
 -- Author: Aka-DoctorCode 
--- File: AscensionTalentManager.lua
+-- File: Core.lua
 -- Version: 12.0.0
 -------------------------------------------------------------------------------
 -- Copyright (c) 2025–2026 Aka-DoctorCode. All Rights Reserved.
@@ -45,8 +45,8 @@ local function Log(msg, ...)
     end
 end
 
--- Compatibility Wrapper for WoW 11.0.7+
-local function GetConfigInfo(configID)
+-- Helper: Get Config Info (Shared)
+function private.GetConfigInfo(configID)
     if not configID then return nil end
     if C_Traits and C_Traits.GetConfigInfo then
         return C_Traits.GetConfigInfo(configID)
@@ -55,6 +55,14 @@ local function GetConfigInfo(configID)
         return C_ClassTalents.GetConfigInfo(configID)
     end
     return nil
+end
+
+-- Helper: Get Spec ID (Shared)
+function private.GetSpecID()
+    local specIndex = GetSpecialization()
+    if not specIndex then return nil end
+    local id, _ = GetSpecializationInfo(specIndex)
+    return id
 end
 
 local function CanSwapTalents()
@@ -88,19 +96,32 @@ local function GetActiveLoadout()
     local specID = GetSpecializationInfo(specIndex)
     if not specID then return nil, nil end
 
-    -- Attempt to get the real active ID
-    local activeConfigID = C_ClassTalents.GetActiveConfigID()
+    -- 1. Intentamos obtener el ID activo real
+    local activeID = C_ClassTalents.GetActiveConfigID()
+    local activeName = nil
 
-    -- If nil (due to unsaved changes), use the last known saved config
-    if not activeConfigID then
-        activeConfigID = C_ClassTalents.GetLastSelectedSavedConfigID(specID)
+    -- Intentamos sacar el nombre del ID activo
+    if activeID then
+        local info = private.GetConfigInfo(activeID)
+        if info then activeName = info.name end
     end
 
-    if activeConfigID then
-        local info = GetConfigInfo(activeConfigID)
-        return activeConfigID, (info and info.name) or nil
+    -- 2. CORRECCIÓN CRITICA:
+    -- Si no logramos obtener un nombre (porque activeID es temporal/nil),
+    -- consultamos el "Último ID Guardado" como respaldo fiable.
+    if not activeName then
+        local savedID = C_ClassTalents.GetLastSelectedSavedConfigID(specID)
+        if savedID then
+            -- Si el activo era nil, adoptamos el guardado como el "activo" lógico
+            if not activeID then activeID = savedID end
+            
+            -- Buscamos el nombre del guardado
+            local info = private.GetConfigInfo(savedID)
+            if info then activeName = info.name end
+        end
     end
-    return nil, nil
+
+    return activeID, activeName
 end
 
 local function FindLoadoutIDByName(targetName)
@@ -116,7 +137,7 @@ local function FindLoadoutIDByName(targetName)
     if not configIDs then return nil end
 
     for _, configID in ipairs(configIDs) do
-        local info = GetConfigInfo(configID)
+        local info = private.GetConfigInfo(configID)
         -- Compare names ignoring case
         if info and info.name and string.lower(info.name) == string.lower(targetName) then
             return configID
@@ -129,10 +150,8 @@ end
 local lastContextSignature = nil
 
 local function CheckAndPromptSwitch(force)
-    -- 1. Ensure DB exists before reading 'enabled'
-    if not AscensionTalentManagerDB then return end
-    if not AscensionTalentManagerDB.enabled then return end
-    
+    -- 1. Validaciones básicas
+    if not AscensionTalentManagerDB or not AscensionTalentManagerDB.enabled then return end
     if not CanSwapTalents() then return end
 
     local context = GetCurrentContext()
@@ -140,39 +159,50 @@ local function CheckAndPromptSwitch(force)
     if not specIndex then return end
 
     local specID = GetSpecializationInfo(specIndex)
-    -- 2. Added nil check for specID to prevent indexing nil later
     if not specID then return end
 
-    -- 3. Robust nil check for nested table initialization
-    if not AscensionTalentManagerDB.perSpec then
-        AscensionTalentManagerDB.perSpec = {}
-    end
+    -- Inicializar DB si hace falta
+    if not AscensionTalentManagerDB.perSpec then AscensionTalentManagerDB.perSpec = {} end
+    if not AscensionTalentManagerDB.perSpec[specID] then AscensionTalentManagerDB.perSpec[specID] = {} end
 
-    if not AscensionTalentManagerDB.perSpec[specID] then
-        AscensionTalentManagerDB.perSpec[specID] = {}
-    end
-
+    -- Obtener qué build queremos
     local desiredLoadoutName = AscensionTalentManagerDB.perSpec[specID][context]
     if not desiredLoadoutName or desiredLoadoutName == "" or desiredLoadoutName == "-" then return end
 
-    local activeID, activeName = GetActiveLoadout()
+    -- Buscar el ID del build deseado
     local desiredID = FindLoadoutIDByName(desiredLoadoutName)
+    if not desiredID then return end 
 
-    if not desiredID then return end -- Loadout does not exist (deleted or renamed)
+    -- Obtener estado actual (usando la función corregida arriba)
+    local activeID, activeName = GetActiveLoadout()
 
-    -- If we are already in the desired loadout, do nothing
-    if activeID == desiredID and not force then return end
+    if not force then
+        -- A. Si los IDs coinciden exactamente, listo.
+        if activeID and activeID == desiredID then return end
 
-    -- Prevent prompt spam if it was already shown for this situation
+        -- B. Comparación de Nombres (Blindaje contra IDs temporales)
+        -- Usamos strtrim y lower para asegurar que coincidan aunque haya espacios invisibles
+        if activeName and desiredLoadoutName then
+            local cleanActive = strtrim(string.lower(activeName))
+            local cleanDesired = strtrim(string.lower(desiredLoadoutName))
+            if cleanActive == cleanDesired then return end
+        end
+        
+        -- C. Verificación extra: El juego dice que este es el último guardado cargado
+        local lastSavedID = C_ClassTalents.GetLastSelectedSavedConfigID(specID)
+        if lastSavedID and lastSavedID == desiredID then return end
+    end
+
+    -- Evitar spam de la misma alerta
     local _, _, _, _, _, _, _, mapID = GetInstanceInfo()
     local currentSignature = string.format("%s:%s:%s", context, tostring(mapID), tostring(desiredID))
 
     if not force and lastContextSignature == currentSignature then return end
     lastContextSignature = currentSignature
 
-    -- Use the function from the private namespace
+    -- Mostrar alerta
     if private.ShowSwitchPrompt then
-        private.ShowSwitchPrompt(context, activeName, desiredLoadoutName, desiredID)
+        private.ShowSwitchPrompt(context, activeName or "Unknown", desiredLoadoutName, desiredID)
     end
 end
 
@@ -196,22 +226,22 @@ ATS:SetScript("OnEvent", function(self, event, ...)
 end)
 
 -- Slash Commands
-SLASH_AscensionTalentManagerS1 = "/ats"
+SLASH_AscensionTalentManagerS1 = "/atm"
 SLASH_AscensionTalentManagerS2 = "/AscensionTalentManagers"
 
-SlashCmdList["AscensionTalentManagerS"] = function(msg)
-    local cmd = msg:lower()
-    if cmd == "debug" then
-        if AscensionTalentManagerDB then
-            AscensionTalentManagerDB.debug = not AscensionTalentManagerDB.debug
-            print("AscensionTalentManager Debug:", AscensionTalentManagerDB.debug)
-        end
-    elseif cmd == "check" then
-        lastContextSignature = nil
-        print("AscensionTalentManager: Checking talents...")
-        CheckAndPromptSwitch(true)
-    else
-        -- Call ToggleConfig from private namespace
-        if private.ToggleConfig then private.ToggleConfig() end
-    end
-end
+-- SlashCmdList["AscensionTalentManagerS"] = function(msg)
+--     local cmd = msg:lower()
+--     if cmd == "debug" then
+--         if AscensionTalentManagerDB then
+--             AscensionTalentManagerDB.debug = not AscensionTalentManagerDB.debug
+--             print("AscensionTalentManager Debug:", AscensionTalentManagerDB.debug)
+--         end
+--     elseif cmd == "check" then
+--         lastContextSignature = nil
+--         print("AscensionTalentManager: Checking talents...")
+--         CheckAndPromptSwitch(true)
+--     else
+--         -- Call ToggleConfig from private namespace
+--         if private.ToggleConfig then private.ToggleConfig() end
+--     end
+-- end
